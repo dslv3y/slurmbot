@@ -1,0 +1,33 @@
+#!/bin/bash
+
+config_file="$HOME/.config/jb/jb_config.yaml"
+if [[ -f "$config_file" ]]; then
+  logdir=$(grep 'logdir:' "$config_file" | awk '{print $2}' | tr -d "\'\"")
+else
+  logdir="."
+fi
+
+arg="${1}"
+if [[ -d "$arg" ]]; then
+  f="$(ls -t "$arg"/*.out 2>/dev/null | head -n 1)"
+elif [[ -f "$arg" ]]; then
+  f="$arg"
+elif [[ -f "$logdir/$arg" ]]; then
+  f="$logdir/$arg"
+elif [[ -f "$arg.out" ]]; then
+  f="$arg.out"
+elif [[ -f "$logdir/$arg.out" ]]; then
+  f="$logdir/$arg.out"
+else
+    f="$(ls -t "$logdir"/*.out 2>/dev/null | head -n 1)"
+fi
+
+if [[ -f "$f" ]]; then
+  if [ ! -s "$f" ]; then
+    echo -e "\033[31m.out\033[0m file is empty!"
+    echo -e "\npath to \033[31m.out\033[0m file: $f"
+  else
+    cat "$f"
+    echo -e "\npath to \033[31m.out\033[0m file: $f"
+  fi
+fi

@@ -1,0 +1,3 @@
+#!/bin/bash
+
+sacct --format=JobID,JobName,Partition,Account,AllocCPUS,State,ExitCode,Start,End,Elapsed

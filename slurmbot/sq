@@ -1,0 +1,3 @@
+#!/bin/bash
+
+squeue --me --format="%.18i %.9P %.16j %.2t %.10M %.6D %.10l %.6Q %.8a %.12R"
