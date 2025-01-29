@@ -1,19 +1,15 @@
 [tool.poetry]
 name = "slurmbot"
-version = "0.1.3"
-description = "Simple tool to run telegram bot to notify about slurm jobs done."
+version = "0.2.0"
+description = "Simple tool to wrap and execute sbatch commands from `python` scripts or `Jupyter Notebook` cells with `conda` envs and config files. Secure and reproducible"
+
 authors = ["Dmitry Solovey <dsolovey@ist.ac.at>"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.9"
-pyTelegramBotAPI = "^4.23"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
-
-
-[tool.poetry.scripts]
-slurmbot = 'slurmbot.__main__:main'
