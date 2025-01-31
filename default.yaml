@@ -1,0 +1,10 @@
+account: ''
+conda_prefix: 'ml load anaconda3/2024.03_deb12 2> /dev/null && source /mnt/nfs/clustersw/Debian/bullseye/anaconda3/2024.03_deb12/activate_anaconda3_2024.03_deb12.txt && conda activate'
+cpus: 4
+mem: 4
+logdir: '~/logs'
+name: ''
+partition: ''
+prefix: 'unset SLURM_EXPORT_ENV'
+reservation: ''
+time: 72

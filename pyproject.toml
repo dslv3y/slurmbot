@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "slurmbot"
-version = "0.2.2"
+version = "0.2.3"
 description = "Simple tool to wrap and execute sbatch commands from `python` scripts or `Jupyter Notebook` cells with `conda` envs and config files. Secure and reproducible"
 
 authors = ["Dmitry Solovey <dsolovey@ist.ac.at>"]

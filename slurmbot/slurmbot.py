@@ -34,9 +34,11 @@ class SlurmBot:
 		params["reservation"] = f'--reservation={params["reservation"]}' if params["reservation"] else ""
 		params["account"] = f'--account {params["account"]}' if params["account"] else ""
 		params["partition"] = f'--partition {params["partition"]}' if params["partition"] else ""
-		# TODO don't require logdir to be set in config
-		# TODO don't require name to be set in config
-		# TODO don't require mem and cpus to be set in config
+		params["logdir"] = params["logdir"] if "logdir" in params.keys() else "."
+		params["time"] = params["time"] if "time" in params.keys() else 24
+		params["cpus"] = params["cpus"] if "cpus" in params.keys() else 4
+		params["mem"] = params["mem"] if "mem" in params.keys() else 4
+		params["name"] = params["name"] if "name" in params.keys() else cmd.split()[0]
 
 		# Build sbatch command
 		sbatch_cmd = f'''sbatch {params["account"]} {params["partition"]} {params["reservation"]} \
