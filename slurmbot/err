@@ -1,6 +1,6 @@
 #!/bin/bash
 
-config_file="$HOME/.config/jb/jb_config.yaml"
+config_file="$HOME/.config/slurmbot/default.yaml"
 if [[ -f "$config_file" ]]; then
   logdir=$(grep 'logdir:' "$config_file" | awk '{print $2}' | tr -d "\'\"")
 else
