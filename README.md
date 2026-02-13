@@ -23,7 +23,7 @@ With Telegram (teleslurm) — message "started" / "finished" to a chat:
 ```python
 from slurmbot.slurmbot import SlurmBot
 sb = SlurmBot()
-sb.run(f"ls -la", dry=False, mem=4, cpus=4, v=2, time=48, teleslurm=True)
+sb.run(f"ls -la", dry=False, mem=4, cpus=4, v=2, time=48, teleslurm=True) # will sent messages upon the start, finish and errors
 ```
 
 CLI: 

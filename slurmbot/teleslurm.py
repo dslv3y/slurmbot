@@ -218,10 +218,16 @@ def handle_status_command(argv=None):
         return None
 
     slurm_id = args.slurm_id or os.environ.get("SLURM_JOB_ID", "")
-    message_parts = " ".join(args.message) if args.message else ""
-    if slurm_id and message_parts:
+    if args.message:
+        message_parts = " ".join(args.message)
+    elif not sys.stdin.isatty():
+        message_parts = sys.stdin.read().strip()
+    else:
+        message_parts = ""
+    # Prepend job id only if not already present (e.g. "254816 failed" from trap)
+    if slurm_id and message_parts and not message_parts.strip().startswith(str(slurm_id)):
         message_parts = f"{slurm_id} {message_parts}"
-    elif slurm_id:
+    elif slurm_id and not message_parts:
         message_parts = str(slurm_id)
 
     if args.status:

@@ -79,19 +79,26 @@ class SlurmBot:
 		params["mem"] = params.get("mem", 4)
 		params["name"] = params["name"] if params.get("name") else cmd.split(" ")[0]
 
-		# Optional teleslurm: notify when job finishes. Use trap EXIT so "finished" is sent even on failure/kill.
-		# (%j is only for sbatch -o/-e; inside the wrap we use SLURM_JOB_ID.)
-		# teleslurm.py will auto-prepend SLURM_JOB_ID from env, so we just send "finished".
+		# Optional teleslurm: trap EXIT sends "finished" or "failed" (with first 5 lines of .err + status).
 		trap_part = ""
 		if teleslurm and not dry:
-			sq = "'\\''"  # single-quote escape for outer -c '...'
-			status_flag = " -s" if teleslurm_status else ""
-			if teleslurm_chat not in (None, ""):
-				esc = (teleslurm_chat or "").replace("'", "'\\''")
-				trap_cmd = f"python -m slurmbot.teleslurm -c '{esc}'{status_flag} finished"
-			else:
-				trap_cmd = f"python -m slurmbot.teleslurm{status_flag} finished"
-			trap_part = f"trap {sq}{trap_cmd}{sq} EXIT; "
+			logdir_esc = params["logdir"].replace("'", "'\\''")
+			export_logdir = f"export SLURMBOT_LOGDIR='{logdir_esc}'; "
+			chat_val = (teleslurm_chat or "").strip()
+			export_chat = f"export SLURMBOT_TELESLURM_CHAT='{chat_val.replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'; " if chat_val else ""
+			export_status = "export SLURMBOT_TELESLURM_STATUS=1; " if teleslurm_status else "export SLURMBOT_TELESLURM_STATUS=0; "
+			# Trap: on failure send "{jobid} failed" + first 5 lines of .err + "..." + server status; else send "finished"
+			sq = "'\\''"
+			trap_body = (
+				"ec=$?; errf=\"${SLURMBOT_LOGDIR:-$HOME/logs}/${SLURM_JOB_ID}.err\"; "
+				"if [ $ec -ne 0 ]; then "
+				"errtext=$(head -5 \"$errf\" 2>/dev/null); "
+				"n=$(wc -l < \"$errf\" 2>/dev/null || echo 0); "
+				"[ \"$n\" -gt 5 ] 2>/dev/null && errtext=\"$errtext\"$'\\n'\"...\"; "
+				"printf \"%s failed\\n\\n%s\" \"$SLURM_JOB_ID\" \"$errtext\" | python -m slurmbot.teleslurm -s; "
+				"else sflag=\"\"; [ \"$SLURMBOT_TELESLURM_STATUS\" = \"1\" ] && sflag=\"-s\"; python -m slurmbot.teleslurm $sflag finished; fi"
+			)
+			trap_part = f"{export_logdir}{export_chat}{export_status}trap {sq}{trap_body}{sq} EXIT; "
 
 		wrap_script = f"/bin/bash -c '{trap_part}{params["prefix"]}{params["conda"]}{params["cmd"]}'"
 
