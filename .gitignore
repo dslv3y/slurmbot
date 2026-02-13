@@ -1,1 +1,2 @@
 dist/*
+slurmbot/__pycache__
