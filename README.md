@@ -28,7 +28,7 @@ sb.run(f"ls -la", dry=False, mem=4, cpus=4, v=2, time=48, teleslurm=True)
 
 CLI: 
 ```bash
-`python -m slurmbot.teleslurm -c chat1 "MESSAGE"` # 🚨 do not forget to specify chat1 settings in config if use -c
+python -m slurmbot.teleslurm -s -c chat1 "MESSAGE" # 🚨 do not forget to specify chat1 settings in config if use -c
 ```
 
 ## Config (YAML)

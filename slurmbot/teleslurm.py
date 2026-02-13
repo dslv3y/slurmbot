@@ -105,18 +105,78 @@ def send_telegram_message(text, BOT_TOKEN, CHAT_ID, THREAD):
         return None
 
 
+def _slurm_squeue_lines():
+    """Return squeue -h output lines, or [] on failure."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["squeue", "-h"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        return [l for l in out.strip().split("\n") if l.strip()]
+    except Exception:
+        return []
+
+
+def _slurm_allocated_procs():
+    """Total allocated CPUs across all jobs (squeue -h -o '%C'). Return 0 if unavailable."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["squeue", "-h", "-o", "%C"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        total = 0
+        for line in out.strip().splitlines():
+            line = line.strip()
+            if line and line.isdigit():
+                total += int(line)
+        return total
+    except Exception:
+        return 0
+
+
+def _slurm_allocated_gpus():
+    """Total allocated GPUs from squeue GRES (e.g. gpu:2). Return 0 if unavailable."""
+    import subprocess
+    import re
+    try:
+        out = subprocess.check_output(
+            ["squeue", "-h", "-o", "%b"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        total = 0
+        for line in out.strip().splitlines():
+            # Match gpu:N or gpu:type:N
+            for m in re.finditer(r"gpu(?::[^:,]+)?:(\d+)", line, re.IGNORECASE):
+                total += int(m.group(1))
+        return total
+    except Exception:
+        return 0
+
+
 def get_server_load():
-    """Get server CPU and memory usage (Linux/Unix systems)"""
+    """Get server CPU and memory usage (Linux/Unix systems) and optional Slurm stats."""
     import subprocess
     try:
         cpu_cmd = "top -bn1 | grep 'Cpu(s)' | awk '{print $2 + $4}'"
         cpu_usage = subprocess.check_output(cpu_cmd, shell=True, text=True).strip()
         mem_cmd = "free -m | awk '/Mem:/ {print $3/$2 * 100}'"
         memory_usage = subprocess.check_output(mem_cmd, shell=True, text=True).strip()
-        return {"cpu_usage": float(cpu_usage), "memory_usage": float(memory_usage)}
+        load = {"cpu_usage": float(cpu_usage), "memory_usage": float(memory_usage)}
     except Exception as e:
         _telegram_warn(f"teleslurm: could not get server load: {e}")
-        return {"cpu_usage": 0.0, "memory_usage": 0.0}
+        load = {"cpu_usage": 0.0, "memory_usage": 0.0}
+    load["squeue_len"] = len(_slurm_squeue_lines())
+    load["slurm_procs"] = _slurm_allocated_procs()
+    load["slurm_gpus"] = _slurm_allocated_gpus()
+    return load
 
 
 def handle_status_command(argv=None):
@@ -161,10 +221,24 @@ def handle_status_command(argv=None):
     if args.status:
         load = get_server_load()
         message_parts = message_parts or ""
-        message = (
-            f"{message_parts}\n\nCTLab status 🐝\n"
-            f"CPU: {load['cpu_usage']:.2f}%\nMemory: {load['memory_usage']:.2f}%"
-        )
+        lines = [
+            f"{message_parts}\n\n🤖 Server status",
+            f"💻 CPU: {load['cpu_usage']:.2f}%\n📝 Memory: {load['memory_usage']:.2f}%\n\n",
+			f"🚶🚶🚶 squeue length: {load.get('squeue_len', 0)}",
+        ]
+        if load.get("slurm_procs_total", 0) > 0:
+            avail = load.get("slurm_procs_available", 0)
+            tot = load["slurm_procs_total"]
+            lines.append(f"🌚 Avial. procs: {avail} / {tot}")
+        elif load.get("slurm_procs", 0) > 0:
+            lines.append(f"🌚 Slurm procs: {load['slurm_procs']} allocated")
+        if load.get("slurm_gpus_total", 0) > 0:
+            avail = load.get("slurm_gpus_available", 0)
+            tot = load["slurm_gpus_total"]
+            lines.append(f"🚀 Avial. GPUs: {avail} / {tot} (available / total)")
+        elif load.get("slurm_gpus", 0) > 0:
+            lines.append(f"🚀 Slurm GPUs: {load['slurm_gpus']} allocated")
+        message = "\n".join(lines)
     else:
         message = message_parts or "No message provided"
 

@@ -21,16 +21,39 @@ class SlurmBot:
 			else:
 				print(f"Config file not found at {self.config_path}.")
 
-	def _send_teleslurm(self, message, chat_key=None):
-		"""Send a message via teleslurm (telegram). chat_key=None uses default config; else BOT_TOKEN_<chat_key>, etc."""
-		from slurmbot.teleslurm import load_config, get_chat_config, send_telegram_message
+	def _send_teleslurm(self, message, chat_key=None, include_status=False):
+		"""Send a message via teleslurm (telegram). chat_key=None uses default config; else BOT_TOKEN_<chat_key>, etc.
+		If include_status=True, append server status (CPU/memory) to the message.
+		"""
+		from slurmbot.teleslurm import load_config, get_chat_config, send_telegram_message, get_server_load
 		config = load_config(self.config_path) or self.config
 		BOT_TOKEN, CHAT_ID, THREAD = get_chat_config(config, chat_key)
 		if not BOT_TOKEN or not CHAT_ID:
 			return None
+		if include_status:
+			load = get_server_load()
+			lines = [
+				message,
+				"\n\n 🤖  Server status",
+				f"💻 CPU: {load['cpu_usage']:.2f}%\n📝 Memory: {load['memory_usage']:.2f}%\n\n\n",
+				f"🚶🚶🚶 squeue length: {load.get('squeue_len', 0)}",
+			]
+			if load.get("slurm_procs_total", 0) > 0:
+				avail = load.get("slurm_procs_available", 0)
+				tot = load["slurm_procs_total"]
+				lines.append(f"🌚 Avial. procs: {avail} / {tot}")
+			elif load.get("slurm_procs", 0) > 0:
+				lines.append(f"🌚 Avial. procs: {load['slurm_procs']} allocated")
+			if load.get("slurm_gpus_total", 0) > 0:
+				avail = load.get("slurm_gpus_available", 0)
+				tot = load["slurm_gpus_total"]
+				lines.append(f"🚀 Avial. GPUs: {avail} / {tot} (available / total)")
+			elif load.get("slurm_gpus", 0) > 0:
+				lines.append(f"🚀 Avial. GPUs: {load['slurm_gpus']} allocated")
+			message = "\n".join(lines)
 		return send_telegram_message(message, BOT_TOKEN=BOT_TOKEN, CHAT_ID=CHAT_ID, THREAD=THREAD or "0")
 
-	def run(self, cmd, dry=False, v=0, teleslurm=False, teleslurm_chat=None, **kwargs):
+	def run(self, cmd, dry=False, v=0, teleslurm=False, teleslurm_chat=None, teleslurm_status=False, **kwargs):
 		# Update parameters with defaults from config and provided kwargs
 		params = self.config.copy() if self.config else {}
 
@@ -62,11 +85,12 @@ class SlurmBot:
 		trap_part = ""
 		if teleslurm and not dry:
 			sq = "'\\''"  # single-quote escape for outer -c '...'
+			status_flag = " -s" if teleslurm_status else ""
 			if teleslurm_chat not in (None, ""):
 				esc = (teleslurm_chat or "").replace("'", "'\\''")
-				trap_cmd = f"python -m slurmbot.teleslurm -c '{esc}' finished"
+				trap_cmd = f"python -m slurmbot.teleslurm -c '{esc}'{status_flag} finished"
 			else:
-				trap_cmd = "python -m slurmbot.teleslurm finished"
+				trap_cmd = f"python -m slurmbot.teleslurm{status_flag} finished"
 			trap_part = f"trap {sq}{trap_cmd}{sq} EXIT; "
 
 		wrap_script = f"/bin/bash -c '{trap_part}{params["prefix"]}{params["conda"]}{params["cmd"]}'"
@@ -105,7 +129,7 @@ class SlurmBot:
 			result = subprocess.run(sbatch_argv, check=True, capture_output=True, text=True)
 			job_id = result.stdout.strip()
 			if teleslurm and job_id:
-				self._send_teleslurm(f"{job_id} started", chat_key=teleslurm_chat)
+				self._send_teleslurm(f"{job_id} started", chat_key=teleslurm_chat, include_status=teleslurm_status)
 			return job_id
 
 		except subprocess.CalledProcessError as e:
