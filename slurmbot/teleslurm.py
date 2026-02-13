@@ -14,6 +14,7 @@
 import sys
 import argparse
 import os
+import urllib.parse
 import warnings
 import yaml
 
@@ -87,21 +88,26 @@ def send_telegram_message(text, BOT_TOKEN, CHAT_ID, THREAD):
         return response.json()
     except requests.exceptions.RequestException as e:
         err_raw = str(e).replace(BOT_TOKEN, "<BOT_TOKEN>") if BOT_TOKEN else str(e)
-        send_url = "https://api.telegram.org/bot<BOT_TOKEN>/sendMessage"
-        get_updates_url = "https://api.telegram.org/bot<BOT_TOKEN>/getUpdates"
-        _telegram_warn(
+        token = BOT_TOKEN or "<BOT_TOKEN>"
+        get_updates_url = f"https://api.telegram.org/bot{token}/getUpdates"
+        # Working link: GET with chat_id and text (open in browser to resend)
+        msg_for_url = (text or "slurmbot test").strip() or "slurmbot test"
+        send_url = (
+            f"https://api.telegram.org/bot{token}/sendMessage"
+            f"?chat_id={urllib.parse.quote(str(CHAT_ID))}&text={urllib.parse.quote(msg_for_url)}"
+        )
+        lines = [
             "teleslurm: failed to send message (e.g. timeout, 400, or network). "
             "Check BOT_TOKEN, THREAD, and CHAT_ID in your config.",
-            extra_lines=[
-                f"Raw: {err_raw}",
-                "",
-                "Re-send message (POST with chat_id and text):",
-                f"  {send_url}",
-                "",
-                "Get chat_id from updates:",
-                f"  {get_updates_url}",
-            ],
-        )
+            f"Raw: {err_raw}",
+            "",
+            "Re-send message (open in browser; uses same chat_id and message):",
+            f"  {send_url}",
+            "",
+            "Get chat_id from updates (open in browser or curl):",
+            f"  {get_updates_url}",
+        ]
+        print("\n".join(lines), file=sys.stderr)
         return None
 
 
