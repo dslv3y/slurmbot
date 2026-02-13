@@ -83,11 +83,13 @@ class SlurmBot:
 		trap_part = ""
 		if teleslurm and not dry:
 			logdir_esc = params["logdir"].replace("'", "'\\''")
+			jobname_esc = params["name"].replace("'", "'\\''")
 			export_logdir = f"export SLURMBOT_LOGDIR='{logdir_esc}'; "
+			export_jobname = f"export SLURMBOT_JOB_NAME='{jobname_esc}'; "
 			chat_val = (teleslurm_chat or "").strip()
 			export_chat = f"export SLURMBOT_TELESLURM_CHAT='{chat_val.replace(chr(39), chr(39) + chr(92) + chr(39) + chr(39))}'; " if chat_val else ""
 			export_status = "export SLURMBOT_TELESLURM_STATUS=1; " if teleslurm_status else "export SLURMBOT_TELESLURM_STATUS=0; "
-			# Trap: on failure send "{jobid} failed" + first 5 lines of .err + "..." + server status; else send "finished"
+			# Trap: on failure send "{job_name} failed ({job_id})" + first 5 lines of .err + "..." + status; else "{job_name} finished ({job_id})"
 			sq = "'\\''"
 			trap_body = (
 				"ec=$?; errf=\"${SLURMBOT_LOGDIR:-$HOME/logs}/${SLURM_JOB_ID}.err\"; "
@@ -95,10 +97,10 @@ class SlurmBot:
 				"errtext=$(head -5 \"$errf\" 2>/dev/null); "
 				"n=$(wc -l < \"$errf\" 2>/dev/null || echo 0); "
 				"[ \"$n\" -gt 5 ] 2>/dev/null && errtext=\"$errtext\"$'\\n'\"...\"; "
-				"printf \"%s failed\\n\\n%s\" \"$SLURM_JOB_ID\" \"$errtext\" | python -m slurmbot.teleslurm -s; "
-				"else sflag=\"\"; [ \"$SLURMBOT_TELESLURM_STATUS\" = \"1\" ] && sflag=\"-s\"; python -m slurmbot.teleslurm $sflag finished; fi"
+				"printf \"%s failed (%s)\\n\\n%s\" \"$SLURMBOT_JOB_NAME\" \"$SLURM_JOB_ID\" \"$errtext\" | python -m slurmbot.teleslurm -s; "
+				"else sflag=\"\"; [ \"$SLURMBOT_TELESLURM_STATUS\" = \"1\" ] && sflag=\"-s\"; python -m slurmbot.teleslurm $sflag \"${SLURMBOT_JOB_NAME} finished (${SLURM_JOB_ID})\"; fi"
 			)
-			trap_part = f"{export_logdir}{export_chat}{export_status}trap {sq}{trap_body}{sq} EXIT; "
+			trap_part = f"{export_logdir}{export_jobname}{export_chat}{export_status}trap {sq}{trap_body}{sq} EXIT; "
 
 		wrap_script = f"/bin/bash -c '{trap_part}{params["prefix"]}{params["conda"]}{params["cmd"]}'"
 
@@ -136,7 +138,7 @@ class SlurmBot:
 			result = subprocess.run(sbatch_argv, check=True, capture_output=True, text=True)
 			job_id = result.stdout.strip()
 			if teleslurm and job_id:
-				self._send_teleslurm(f"{job_id} started", chat_key=teleslurm_chat, include_status=teleslurm_status)
+				self._send_teleslurm(f"{params['name']} started ({job_id})", chat_key=teleslurm_chat, include_status=teleslurm_status)
 			return job_id
 
 		except subprocess.CalledProcessError as e:

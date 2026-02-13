@@ -224,8 +224,9 @@ def handle_status_command(argv=None):
         message_parts = sys.stdin.read().strip()
     else:
         message_parts = ""
-    # Prepend job id only if not already present (e.g. "254816 failed" from trap)
-    if slurm_id and message_parts and not message_parts.strip().startswith(str(slurm_id)):
+    # Prepend job id only if not already present (e.g. "jobname finished (jobid)" or "jobname failed (jobid)" from trap)
+    already_has_jobid = slurm_id and str(slurm_id) in message_parts and " (" in message_parts
+    if slurm_id and message_parts and not message_parts.strip().startswith(str(slurm_id)) and not already_has_jobid:
         message_parts = f"{slurm_id} {message_parts}"
     elif slurm_id and not message_parts:
         message_parts = str(slurm_id)
