@@ -71,8 +71,15 @@ class SlurmBot:
 			params["dependency"] =""
 
 		params["cmd"] = " " + cmd
-		params["prefix"] = params.get("prefix", "") + " && " if params.get("prefix") else ""
-		params["conda"] = params.get("conda_prefix", "") + " " + params.get("conda", "") + " && " if params.get("conda") else ""
+		# Build prefix/conda in a safe way for comments/newlines: always terminate with '; ' (not '&&'),
+		# so there is never a dangling '&&' before '#...' or at a line break.
+		params["prefix"] = (params.get("prefix", "") + "; ") if params.get("prefix") else ""
+		if params.get("conda"):
+			base = params.get("conda_prefix", "")
+			conda_part = (base + " " if base else "") + params["conda"]
+			params["conda"] = conda_part + "; "
+		else:
+			params["conda"] = ""
 		params["reservation"] = f'--reservation={params["reservation"]}' if params.get("reservation") else ""
 		params["account"] = f'--account {params["account"]}' if params.get("account") else ""
 		params["partition"] = f'--partition {params["partition"]}' if params.get("partition") else ""
