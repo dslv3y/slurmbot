@@ -38,18 +38,21 @@ class SlurmBot:
 				f"💻 CPU: {load['cpu_usage']:.2f}%\n📝 Memory: {load['memory_usage']:.2f}%\n\n\n",
 				f"🚶🚶🚶 squeue length: {load.get('squeue_len', 0)}",
 			]
+			# CPUs: idle/total, or allocated fallback
 			if load.get("slurm_procs_total", 0) > 0:
-				avail = load.get("slurm_procs_available", 0)
+				idle = load.get("slurm_procs_idle", 0)
 				tot = load["slurm_procs_total"]
-				lines.append(f"🌚 Avial. procs: {avail} / {tot}")
-			elif load.get("slurm_procs", 0) > 0:
-				lines.append(f"🌚 Avial. procs: {load['slurm_procs']} allocated")
+				used=tot-idle
+				lines.append(f"🌚 CPUs used/total: {used} / {tot}")
+			elif load.get("slurm_procs_allocated", 0) > 0:
+				lines.append(f"🌚 CPUs allocated: {load['slurm_procs_allocated']}")
+			# GPUs: allocated/total
 			if load.get("slurm_gpus_total", 0) > 0:
-				avail = load.get("slurm_gpus_available", 0)
-				tot = load["slurm_gpus_total"]
-				lines.append(f"🚀 Avial. GPUs: {avail} / {tot} (available / total)")
-			elif load.get("slurm_gpus", 0) > 0:
-				lines.append(f"🚀 Avial. GPUs: {load['slurm_gpus']} allocated")
+				alloc_g = load.get("slurm_gpus_allocated", 0)
+				tot_g = load["slurm_gpus_total"]
+				lines.append(f"🚀 GPUs used/total: {alloc_g} / {tot_g}")
+			elif load.get("slurm_gpus_allocated", 0) > 0:
+				lines.append(f"🚀 GPUs allocated: {load['slurm_gpus_allocated']}")
 			message = "\n".join(lines)
 		return send_telegram_message(message, BOT_TOKEN=BOT_TOKEN, CHAT_ID=CHAT_ID, THREAD=THREAD or "0")
 

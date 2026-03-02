@@ -167,6 +167,62 @@ def _slurm_allocated_gpus():
         return 0
 
 
+def _slurm_total_procs():
+    """Total and idle CPUs from sinfo -o '%C' (allocated/idle/other/total). Return (idle, total) if available, else (0, 0)."""
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ["sinfo", "-h", "-o", "%C"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        idle_sum = 0
+        total_sum = 0
+        for line in out.strip().splitlines():
+            parts = line.strip().split("/")
+            if len(parts) >= 4:
+                # allocated/idle/other/total
+                try:
+                    idle_sum += int(parts[1])
+                    total_sum += int(parts[3])
+                except ValueError:
+                    continue
+        return idle_sum, total_sum
+    except Exception:
+        return 0, 0
+
+
+def _slurm_total_gpus():
+    """Total GPUs cluster-wide from sinfo -o '%G %D'. Return total if available, else 0."""
+    import subprocess
+    import re
+    try:
+        out = subprocess.check_output(
+            ["sinfo", "-h", "-o", "%G %D"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+        total_gpus = 0
+        for line in out.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(None, 1)
+            gres = parts[0] if parts else ""
+            try:
+                nodes = int(parts[1]) if len(parts) > 1 else 1
+            except ValueError:
+                nodes = 1
+            # Match gpu:N or gpu:type:N
+            for m in re.finditer(r"gpu(?::[^:,]+)?:(\d+)", gres, re.IGNORECASE):
+                total_gpus += int(m.group(1)) * nodes
+        return total_gpus
+    except Exception:
+        return 0
+
+
 def get_server_load():
     """Get server CPU and memory usage (Linux/Unix systems) and optional Slurm stats."""
     import subprocess
@@ -180,8 +236,17 @@ def get_server_load():
         _telegram_warn(f"teleslurm: could not get server load: {e}")
         load = {"cpu_usage": 0.0, "memory_usage": 0.0}
     load["squeue_len"] = len(_slurm_squeue_lines())
-    load["slurm_procs"] = _slurm_allocated_procs()
-    load["slurm_gpus"] = _slurm_allocated_gpus()
+    # CPU stats
+    idle_procs, total_procs = _slurm_total_procs()
+    alloc_procs = _slurm_allocated_procs()
+    load["slurm_procs_allocated"] = alloc_procs
+    load["slurm_procs_idle"] = idle_procs
+    load["slurm_procs_total"] = total_procs
+    # GPU stats
+    alloc_gpus = _slurm_allocated_gpus()
+    total_gpus = _slurm_total_gpus()
+    load["slurm_gpus_allocated"] = alloc_gpus
+    load["slurm_gpus_total"] = total_gpus
     return load
 
 
@@ -239,18 +304,20 @@ def handle_status_command(argv=None):
             f"💻 CPU: {load['cpu_usage']:.2f}%\n📝 Memory: {load['memory_usage']:.2f}%\n\n",
 			f"🚶🚶🚶 squeue length: {load.get('squeue_len', 0)}",
         ]
+        # CPU: show idle/total; if we only have allocated, fall back to that
         if load.get("slurm_procs_total", 0) > 0:
-            avail = load.get("slurm_procs_available", 0)
+            idle = load.get("slurm_procs_idle", 0)
             tot = load["slurm_procs_total"]
-            lines.append(f"🌚 Avial. procs: {avail} / {tot}")
-        elif load.get("slurm_procs", 0) > 0:
-            lines.append(f"🌚 Slurm procs: {load['slurm_procs']} allocated")
+            lines.append(f"🌚 CPUs idle/total: {idle} / {tot}")
+        elif load.get("slurm_procs_allocated", 0) > 0:
+            lines.append(f"🌚 CPUs allocated: {load['slurm_procs_allocated']}")
+        # GPUs: show allocated/total (cluster-wide), since idle GPUs can be constrained by user limits
         if load.get("slurm_gpus_total", 0) > 0:
-            avail = load.get("slurm_gpus_available", 0)
-            tot = load["slurm_gpus_total"]
-            lines.append(f"🚀 Avial. GPUs: {avail} / {tot} (available / total)")
-        elif load.get("slurm_gpus", 0) > 0:
-            lines.append(f"🚀 Slurm GPUs: {load['slurm_gpus']} allocated")
+            alloc_g = load.get("slurm_gpus_allocated", 0)
+            tot_g = load["slurm_gpus_total"]
+            lines.append(f"🚀 GPUs allocated/total: {alloc_g} / {tot_g}")
+        elif load.get("slurm_gpus_allocated", 0) > 0:
+            lines.append(f"🚀 GPUs allocated: {load['slurm_gpus_allocated']}")
         message = "\n".join(lines)
     else:
         message = message_parts or "No message provided"
