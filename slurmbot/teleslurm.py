@@ -308,14 +308,15 @@ def handle_status_command(argv=None):
         if load.get("slurm_procs_total", 0) > 0:
             idle = load.get("slurm_procs_idle", 0)
             tot = load["slurm_procs_total"]
-            lines.append(f"🌚 CPUs idle/total: {idle} / {tot}")
+            used=tot-idle
+            lines.append(f"🌚 CPUs used/total: {used} / {tot}")
         elif load.get("slurm_procs_allocated", 0) > 0:
             lines.append(f"🌚 CPUs allocated: {load['slurm_procs_allocated']}")
         # GPUs: show allocated/total (cluster-wide), since idle GPUs can be constrained by user limits
         if load.get("slurm_gpus_total", 0) > 0:
             alloc_g = load.get("slurm_gpus_allocated", 0)
             tot_g = load["slurm_gpus_total"]
-            lines.append(f"🚀 GPUs allocated/total: {alloc_g} / {tot_g}")
+            lines.append(f"🚀 GPUs used/total: {alloc_g} / {tot_g}")
         elif load.get("slurm_gpus_allocated", 0) > 0:
             lines.append(f"🚀 GPUs allocated: {load['slurm_gpus_allocated']}")
         message = "\n".join(lines)
