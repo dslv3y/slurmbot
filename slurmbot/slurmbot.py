@@ -3,13 +3,17 @@
 import subprocess
 import os
 import shlex
+import sys
+import time
 import yaml
 
 class SlurmBot:
-	def __init__(self, config_path=None):
+	def __init__(self, config_path=None, mode="slurm"):
 		# Default to config file in ~/.config/slurmbot/default.yaml
+		# mode: "slurm" (sbatch) or "screen" (detached screen session)
 		self.config_path = config_path or os.path.expanduser("~/.config/slurmbot/default.yaml")
 		self.config = self.load_config()
+		self.mode = mode if mode in ("slurm", "screen") else "slurm"
 
 	def load_config(self):
 		if os.path.exists(self.config_path):
@@ -70,7 +74,8 @@ class SlurmBot:
 		else:
 			params["dependency"] =""
 
-		params["cmd"] = " " + cmd
+		# Escape single quotes in cmd so the wrap script stays valid inside outer single quotes
+		params["cmd"] = " " + cmd.replace("'", "'\\''")
 		# Build prefix/conda in a safe way for comments/newlines: always terminate with '; ' (not '&&'),
 		# so there is never a dangling '&&' before '#...' or at a line break.
 		params["prefix"] = (params.get("prefix", "") + "; ") if params.get("prefix") else ""
@@ -83,7 +88,8 @@ class SlurmBot:
 		params["reservation"] = f'--reservation={params["reservation"]}' if params.get("reservation") else ""
 		params["account"] = f'--account {params["account"]}' if params.get("account") else ""
 		params["partition"] = f'--partition {params["partition"]}' if params.get("partition") else ""
-		params["logdir"] = os.path.expanduser(params.get("logdir", "."))
+		# Default logdir: screen mode uses ~/logs so logs are predictable; slurm uses config or "."
+		params["logdir"] = os.path.expanduser(params.get("logdir", "~/logs" if self.mode == "screen" else "."))
 		params["time"] = params.get("time", 24)
 		params["cpus"] = params.get("cpus", 4)
 		params["mem"] = params.get("mem", 4)
@@ -101,18 +107,25 @@ class SlurmBot:
 			export_status = "export SLURMBOT_TELESLURM_STATUS=1; " if teleslurm_status else "export SLURMBOT_TELESLURM_STATUS=0; "
 			# Trap: on failure send "{job_name} failed ({job_id})" + first 5 lines of .err + "..." + status; else "{job_name} finished ({job_id})"
 			sq = "'\\''"
+			# Use space instead of newline so trap body stays on one line (avoids multi-line quote parse issues in screen/bash -c)
 			trap_body = (
-				"ec=$?; errf=\"${SLURMBOT_LOGDIR:-$HOME/logs}/${SLURM_JOB_ID}.err\"; "
+				"ec=$?; rid=\"${SLURM_JOB_ID:-$SLURMBOT_SESSION_ID}\"; errf=\"${SLURMBOT_LOGDIR:-$HOME/logs}/${rid}.err\"; "
 				"if [ $ec -ne 0 ]; then "
 				"errtext=$(head -5 \"$errf\" 2>/dev/null); "
 				"n=$(wc -l < \"$errf\" 2>/dev/null || echo 0); "
-				"[ \"$n\" -gt 5 ] 2>/dev/null && errtext=\"$errtext\"$'\\n'\"...\"; "
-				"printf \"%s failed (%s)\\n\\n%s\" \"$SLURMBOT_JOB_NAME\" \"$SLURM_JOB_ID\" \"$errtext\" | python -m slurmbot.teleslurm -s; "
-				"else sflag=\"\"; [ \"$SLURMBOT_TELESLURM_STATUS\" = \"1\" ] && sflag=\"-s\"; python -m slurmbot.teleslurm $sflag \"${SLURMBOT_JOB_NAME} finished (${SLURM_JOB_ID})\"; fi"
+				"[ \"$n\" -gt 5 ] 2>/dev/null && errtext=\"$errtext\" \"...\"; "
+				"printf \"%s failed (%s)\\n\\n%s\" \"$SLURMBOT_JOB_NAME\" \"$rid\" \"$errtext\" | python -m slurmbot.teleslurm -s; "
+				"else sflag=\"\"; [ \"$SLURMBOT_TELESLURM_STATUS\" = \"1\" ] && sflag=\"-s\"; python -m slurmbot.teleslurm $sflag \"${SLURMBOT_JOB_NAME} finished (${rid})\"; fi"
 			)
-			trap_part = f"{export_logdir}{export_jobname}{export_chat}{export_status}trap {sq}{trap_body}{sq} EXIT; "
+			trap_part = f"{export_logdir}{export_jobname}{export_chat}{export_status}trap {sq}{trap_body}{sq} EXIT; {sq}"
+			wrap_content = f"{trap_part}{params['prefix']}{params['conda']}{params['cmd']}"
+		else:
+			wrap_content = f"{params['prefix']}{params['conda']}{params['cmd']}"
 
-		wrap_script = f"/bin/bash -c '{trap_part}{params["prefix"]}{params["conda"]}{params["cmd"]}'"
+		wrap_script = f"/bin/bash -c '{wrap_content}'"
+
+		if self.mode == "screen":
+			return self._run_screen(wrap_script, params, dry, v, teleslurm, teleslurm_chat, teleslurm_status)
 
 		# Build sbatch argv so --wrap gets one argument (avoids shell quoting issues)
 		sbatch_argv = ["sbatch"]
@@ -153,3 +166,79 @@ class SlurmBot:
 
 		except subprocess.CalledProcessError as e:
 			print(f"Error: {e.stderr}")
+
+	def _run_screen(self, wrap_script, params, dry, v, teleslurm, teleslurm_chat, teleslurm_status):
+		"""Run the same wrap script in a detached screen session. Returns session_id.
+		Logs go to logdir/<session_id>.out and .err. Session exits when the command finishes (short commands won't show in screen -ls).
+		"""
+		import re
+		session_id = re.sub(r"[^a-zA-Z0-9_-]", "_", params["name"]) + "_" + str(int(time.time()))
+		logdir = params["logdir"]
+		prefix_len = len("/bin/bash -c '")
+		if wrap_script.startswith("/bin/bash -c '") and wrap_script.endswith("'"):
+			body = wrap_script[prefix_len:-1]
+		else:
+			body = wrap_script
+		if not dry:
+			logdir_esc = logdir.replace("'", "'\\''")
+			lead = (
+				f"export SLURMBOT_SESSION_ID='{session_id}'; export SLURMBOT_LOGDIR='{logdir_esc}'; "
+				f"mkdir -p \"$SLURMBOT_LOGDIR\"; exec >\"$SLURMBOT_LOGDIR/$SLURMBOT_SESSION_ID.out\" 2>\"$SLURMBOT_LOGDIR/$SLURMBOT_SESSION_ID.err\"; "
+			)
+			# Build script valid for a file: use double-quoted trap so no '\'' escaping issues
+			if teleslurm and body.count("trap ") == 1:
+				trap_body_inner = (
+					"ec=$?; rid=\"${SLURM_JOB_ID:-$SLURMBOT_SESSION_ID}\"; errf=\"${SLURMBOT_LOGDIR:-$HOME/logs}/${rid}.err\"; "
+					"if [ $ec -ne 0 ]; then "
+					"errtext=$(head -5 \"$errf\" 2>/dev/null); n=$(wc -l < \"$errf\" 2>/dev/null || echo 0); "
+					"[ \"$n\" -gt 5 ] 2>/dev/null && errtext=\"$errtext\" \"...\"; "
+					"printf \"%s failed (%s)\\n\\n%s\" \"$SLURMBOT_JOB_NAME\" \"$rid\" \"$errtext\" | python -m slurmbot.teleslurm -s; "
+					"else sflag=\"\"; [ \"$SLURMBOT_TELESLURM_STATUS\" = \"1\" ] && sflag=\"-s\"; python -m slurmbot.teleslurm $sflag \"${SLURMBOT_JOB_NAME} finished (${rid})\"; fi"
+				)
+				chat_val = (teleslurm_chat or "").strip()
+				export_chat_file = f"export SLURMBOT_TELESLURM_CHAT='{chat_val.replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'; " if chat_val else ""
+				trap_part_file = (
+					f"export SLURMBOT_LOGDIR='{logdir_esc}'; export SLURMBOT_JOB_NAME='{params['name'].replace(chr(39), chr(39)+chr(92)+chr(39)+chr(39))}'; "
+					+ export_chat_file
+					+ f"export SLURMBOT_TELESLURM_STATUS={1 if teleslurm_status else 0}; "
+					f'trap "{trap_body_inner.replace(chr(34), chr(92)+chr(34))}" EXIT; '
+				)
+				# params["cmd"] is escaped for wrap_script ('\''); for file script use literal quotes
+				cmd_file = params["cmd"].replace("'\\''", "'")
+				inner = lead + trap_part_file + params["prefix"] + params["conda"] + cmd_file
+			else:
+				inner = lead + body
+			script_path = os.path.join(logdir, f"{session_id}.sh")
+			os.makedirs(logdir, exist_ok=True)
+			with open(script_path, "w") as f:
+				f.write(inner)
+			screen_argv = ["screen", "-dmS", session_id, "/bin/bash", script_path]
+		else:
+			inner = body
+			screen_argv = ["screen", "-dmS", session_id, "/bin/bash", "-c", inner]
+		screen_cmd_str = " ".join(shlex.quote(a) for a in screen_argv)
+		if dry:
+			print("\033[33mDry run: Command not submitted.\033[0m")
+			print(screen_cmd_str)
+			print(f"\033[33mScreen session would be:\033[0m  {session_id}")
+			print(f"\033[33mLogs would be:\033[0m  {logdir}/{session_id}.out, {logdir}/{session_id}.err")
+			return
+		try:
+			os.makedirs(logdir, exist_ok=True)
+			if v > 1:
+				print(f"Starting screen: {screen_cmd_str}")
+			result = subprocess.run(screen_argv, capture_output=True, text=True)
+			if result.returncode != 0:
+				print(f"Error: screen exited with {result.returncode}", file=sys.stderr)
+				if result.stderr:
+					print(result.stderr, file=sys.stderr)
+				if result.stdout:
+					print(result.stdout, file=sys.stderr)
+				return None
+			if teleslurm:
+				self._send_teleslurm(f"{params['name']} started ({session_id})", chat_key=teleslurm_chat, include_status=teleslurm_status)
+			if v:
+				print(f"Screen session {session_id} started. Logs: {logdir}/{session_id}.out, {logdir}/{session_id}.err (session exits when command finishes)")
+			return session_id
+		except Exception as e:
+			print(f"Error starting screen: {e}")
