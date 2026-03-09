@@ -127,7 +127,51 @@ class SlurmBot:
 		if self.mode == "screen":
 			return self._run_screen(wrap_script, params, dry, v, teleslurm, teleslurm_chat, teleslurm_status)
 
-		# Build sbatch argv so --wrap gets one argument (avoids shell quoting issues)
+		# Slurm mode: write a real script file and submit it with sbatch instead of using --wrap.
+		# This avoids very complex quoting in --wrap and makes the script identical to what screen runs.
+		script_path = None
+		script_contents = ""
+		logdir = params["logdir"]
+		os.makedirs(logdir, exist_ok=True)
+
+		# Build script: shebang + optional teleslurm trap + prefix/conda/cmd.
+		lines = ["#!/bin/bash"]
+		if teleslurm and not dry:
+			# Same trap semantics as for screen, but encoded directly for a script file using double quotes.
+			trap_body_inner = (
+				"ec=$?; rid=\"${SLURM_JOB_ID:-$SLURMBOT_SESSION_ID}\"; errf=\"${SLURMBOT_LOGDIR:-$HOME/logs}/${rid}.err\"; "
+				"if [ $ec -ne 0 ]; then "
+				"errtext=$(head -5 \"$errf\" 2>/dev/null); n=$(wc -l < \"$errf\" 2>/dev/null || echo 0); "
+				"[ \"$n\" -gt 5 ] 2>/dev/null && errtext=\"$errtext\" \"...\"; "
+				"printf \"%s failed (%s)\\n\\n%s\" \"$SLURMBOT_JOB_NAME\" \"$rid\" \"$errtext\" | python -m slurmbot.teleslurm -s; "
+				"else sflag=\"\"; [ \"$SLURMBOT_TELESLURM_STATUS\" = \"1\" ] && sflag=\"-s\"; python -m slurmbot.teleslurm $sflag \"${SLURMBOT_JOB_NAME} finished (${rid})\"; fi"
+			)
+			jobname_dq = params["name"].replace('"', r'\"')
+			chat_val = (teleslurm_chat or "").strip()
+			chat_dq = chat_val.replace('"', r'\"') if chat_val else ""
+			lines.append(f'SLURMBOT_LOGDIR="{logdir}"; export SLURMBOT_LOGDIR')
+			lines.append(f'SLURMBOT_JOB_NAME="{jobname_dq}"; export SLURMBOT_JOB_NAME')
+			if chat_dq:
+				lines.append(f'SLURMBOT_TELESLURM_CHAT="{chat_dq}"; export SLURMBOT_TELESLURM_CHAT')
+			status_val = "1" if teleslurm_status else "0"
+			lines.append(f"SLURMBOT_TELESLURM_STATUS={status_val}; export SLURMBOT_TELESLURM_STATUS")
+			# Escape inner double quotes for the double-quoted trap string
+			lines.append(f'trap "{trap_body_inner.replace(chr(34), chr(92) + chr(34))}" EXIT')
+
+		# Command line: reuse prefix/conda, but for the file use literal single quotes (undo the '\'' escaping).
+		cmd_file = params["cmd"].replace("'\\''", "'")
+		lines.append(f"unset SLURM_EXPORT_ENV; {params['prefix']}{params['conda']}{cmd_file}")
+		script_contents = "\n".join(lines) + "\n"
+
+		if not dry:
+			# Use job-name + timestamp as script filename; logs still go to logdir/%j.{out,err}.
+			import time as _time
+			script_basename = f"{params['name']}_{int(_time.time())}.sh"
+			script_path = os.path.join(logdir, script_basename)
+			with open(script_path, "w") as f:
+				f.write(script_contents)
+
+		# Build sbatch argv to submit the script file.
 		sbatch_argv = ["sbatch"]
 		if params.get("account"):
 			sbatch_argv.extend(params["account"].split(maxsplit=1))
@@ -145,8 +189,13 @@ class SlurmBot:
 			"--mem", f"{params['mem']}G",
 			"--time", f"{params['time']}:00:00",
 			"--parsable",
-			"--wrap", wrap_script,
 		])
+		if not dry and script_path:
+			sbatch_argv.append(script_path)
+		else:
+			# For dry run, just show a placeholder path.
+			sbatch_argv.append("<script_path>")
+
 		sbatch_cmd = " ".join(shlex.quote(a) for a in sbatch_argv)
 
 		if dry:

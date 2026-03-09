@@ -1,2 +1,3 @@
 dist/*
 slurmbot/__pycache__
+test*
