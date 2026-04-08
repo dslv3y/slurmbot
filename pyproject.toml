@@ -1,14 +1,16 @@
 [tool.poetry]
 name = "slurmbot"
-version = "0.2.3"
+version = "0.2.8"
 description = "Simple tool to wrap and execute sbatch commands from `python` scripts or `Jupyter Notebook` cells with `conda` envs and config files. Secure and reproducible"
 
-authors = ["Dmitry Solovey <dsolovey@ist.ac.at>"]
+authors = ["Dmitry Solovey <dsolovey@ist.ac.at>", "Daniil Smutin <dvsmutin@gmail.com>"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.9"
+requests = "^2.28"
+PyYAML = "^6.0"
 
 [build-system]
 requires = ["poetry-core"]

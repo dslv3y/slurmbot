@@ -8,3 +8,9 @@ partition: ''
 prefix: 'unset SLURM_EXPORT_ENV'
 reservation: ''
 time: 72
+
+# Optional: Telegram (teleslurm). Get BOT_TOKEN from @BotFather: /newbot → paste token.
+# BOT_TOKEN: 'your_bot_token'
+# CHAT_ID: 'your_chat_id'
+# THREAD: '0'
+# Per-chat (use -c chat1 or teleslurm_chat="chat1"): BOT_TOKEN_chat1, CHAT_ID_chat1, THREAD_chat1
